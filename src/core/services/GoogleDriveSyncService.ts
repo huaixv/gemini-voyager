@@ -32,7 +32,7 @@ const AISTUDIO_FOLDERS_FILE_NAME = 'gemini-voyager-aistudio-folders.json';
 const PROMPTS_FILE_NAME = 'gemini-voyager-prompts.json';
 const STARRED_FILE_NAME = 'gemini-voyager-starred.json';
 const FORKS_FILE_NAME = 'gemini-voyager-forks.json';
-const BACKUP_FOLDER_NAME = 'Gemini Voyager Data';
+const BACKUP_FOLDER_NAME = 'Gemini Voyager Custom Data';
 const DRIVE_API_BASE = 'https://www.googleapis.com/drive/v3';
 const DRIVE_UPLOAD_BASE = 'https://www.googleapis.com/upload/drive/v3';
 
