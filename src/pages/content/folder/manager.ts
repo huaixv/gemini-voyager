@@ -1104,17 +1104,42 @@ export class FolderManager {
     element.addEventListener('dragover', (e) => {
       e.preventDefault();
       e.stopPropagation(); // Prevent root drop zone from also highlighting
-      element.classList.add('gv-folder-dragover');
+
+      const rect = element.getBoundingClientRect();
+      const relativeY = e.clientY - rect.top;
+      const height = rect.height;
+      const tolerance = height * 0.25;
+
+      element.classList.remove('gv-folder-dragover');
+      element.parentElement?.classList.remove('gv-folder-dragover-top', 'gv-folder-dragover-bottom');
+
+      if (e.dataTransfer?.types.includes('application/json')) {
+         if (relativeY < tolerance) {
+           element.parentElement?.classList.add('gv-folder-dragover-top');
+         } else if (relativeY > height - tolerance) {
+           element.parentElement?.classList.add('gv-folder-dragover-bottom');
+         } else {
+           element.classList.add('gv-folder-dragover');
+         }
+      } else {
+         element.classList.add('gv-folder-dragover');
+      }
     });
 
     element.addEventListener('dragleave', () => {
       element.classList.remove('gv-folder-dragover');
+      element.parentElement?.classList.remove('gv-folder-dragover-top', 'gv-folder-dragover-bottom');
     });
 
     element.addEventListener('drop', (e) => {
       e.preventDefault();
       e.stopPropagation(); // CRITICAL: Prevent event bubbling to root drop zone
+
+      const isTop = element.parentElement?.classList.contains('gv-folder-dragover-top');
+      const isBottom = element.parentElement?.classList.contains('gv-folder-dragover-bottom');
+
       element.classList.remove('gv-folder-dragover');
+      element.parentElement?.classList.remove('gv-folder-dragover-top', 'gv-folder-dragover-bottom');
 
       const data = e.dataTransfer?.getData('application/json');
       if (!data) return;
@@ -1131,9 +1156,15 @@ export class FolderManager {
 
         // Handle different drag types
         if (dragData.type === 'folder') {
-          // Handle folder drop
-          this.debug('Dropping folder into folder:', dragData.title, '→', folderId);
-          this.addFolderToFolder(folderId, dragData);
+          if (isTop) {
+            this.reorderFolder(dragData.folderId!, folderId, 'before');
+          } else if (isBottom) {
+            this.reorderFolder(dragData.folderId!, folderId, 'after');
+          } else {
+            // Handle folder drop
+            this.debug('Dropping folder into folder:', dragData.title, '→', folderId);
+            this.addFolderToFolder(folderId, dragData);
+          }
         } else {
           // Handle conversation drop - supports both single and multiple conversations
           if (dragData.conversations && dragData.conversations.length > 0) {
@@ -2012,17 +2043,18 @@ export class FolderManager {
         return;
       }
 
-      const folder: Folder = {
+      const newFolder: Folder = {
         id: this.generateId(),
         name,
         parentId,
         isExpanded: true,
+        order: Date.now(), // default to end of list
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
 
-      this.data.folders.push(folder);
-      this.data.folderContents[folder.id] = [];
+      this.data.folders.push(newFolder);
+      this.data.folderContents[newFolder.id] = [];
       this.saveData();
       this.refresh();
     };
@@ -2258,7 +2290,15 @@ export class FolderManager {
       if (a.pinned && !b.pinned) return -1;
       if (!a.pinned && b.pinned) return 1;
 
-      // Within the same pinned state, sort by name using localized comparison
+      // Sort by explicitly defined order if available
+      const orderA = typeof a.order === 'number' ? a.order : 999999;
+      const orderB = typeof b.order === 'number' ? b.order : 999999;
+      
+      if (orderA !== orderB) {
+        return orderA - orderB;
+      }
+
+      // Within the same pinned state and order, sort by name using localized comparison
       return a.name.localeCompare(b.name, undefined, {
         numeric: true,
         sensitivity: 'base',
@@ -2266,8 +2306,92 @@ export class FolderManager {
     });
   }
 
+  private reorderFolder(draggedFolderId: string, targetFolderId: string, placement: 'before' | 'after'): void {
+    if (draggedFolderId === targetFolderId) return;
+
+    const targetFolder = this.data.folders.find(f => f.id === targetFolderId);
+    const draggedFolder = this.data.folders.find(f => f.id === draggedFolderId);
+    
+    if (!targetFolder || !draggedFolder) return;
+
+    // Reject drop if trying to place inside its own descendant (prevent cycles)
+    let current: Folder | undefined = targetFolder;
+    while (current) {
+      if (current.parentId === draggedFolderId) {
+        this.showNotificationByLevel(this.t('folder_cannot_move_into_child'), 'error');
+        return;
+      }
+      current = current.parentId ? this.data.folders.find(f => f.id === current!.parentId) : undefined;
+    }
+
+    // Assign new parent
+    draggedFolder.parentId = targetFolder.parentId;
+
+    // Get siblings to re-index their order sequentially
+    const siblings = this.data.folders.filter(f => f.parentId === draggedFolder.parentId && f.id !== draggedFolderId);
+    
+    // Sort existing siblings
+    const sortedSiblings = this.sortFolders(siblings);
+    
+    // Find insertion index
+    const targetIndex = sortedSiblings.findIndex(f => f.id === targetFolderId);
+    if (targetIndex !== -1) {
+      if (placement === 'before') {
+        sortedSiblings.splice(targetIndex, 0, draggedFolder);
+      } else {
+        sortedSiblings.splice(targetIndex + 1, 0, draggedFolder);
+      }
+    } else {
+      sortedSiblings.push(draggedFolder);
+    }
+    
+    // Apply order sequentially
+    sortedSiblings.forEach((f, idx) => {
+      f.order = idx * 10;
+    });
+
+    this.saveData();
+    this.renderAllFolders();
+
+  }
+
+  private getNativeConversationOrder(): Map<string, number> {
+    const orderMap = new Map<string, number>();
+    if (!this.sidebarContainer) return orderMap;
+
+    // The official list of conversation elements in DOM order
+    const elements = this.sidebarContainer.querySelectorAll('[data-test-id="conversation"]');
+    elements.forEach((el, index) => {
+      const id = this.extractConversationId(el as HTMLElement);
+      if (id) {
+        orderMap.set(id, index);
+      }
+    });
+
+    return orderMap;
+  }
+
   private sortConversations(conversations: ConversationReference[]): ConversationReference[] {
-    return sortConversationsByPriority(conversations);
+    const nativeOrder = this.getNativeConversationOrder();
+
+    return [...conversations].sort((a, b) => {
+      // Pinned/starred conversations still come first
+      if (a.starred && !b.starred) return -1;
+      if (!a.starred && b.starred) return 1;
+
+      // Extract native ranks (smaller index means higher in the native list/newer)
+      const rankA = nativeOrder.has(a.conversationId) ? nativeOrder.get(a.conversationId)! : 999999;
+      const rankB = nativeOrder.has(b.conversationId) ? nativeOrder.get(b.conversationId)! : 999999;
+
+      if (rankA !== rankB) {
+        return rankA - rankB;
+      }
+
+      // Fallback to original timestamp logic for conversations not currently rendered in the DOM
+      const timeA = a.lastOpenedAt ?? a.addedAt ?? 0;
+      const timeB = b.lastOpenedAt ?? b.addedAt ?? 0;
+      return timeB - timeA;
+    });
   }
 
   private addConversationToFolder(

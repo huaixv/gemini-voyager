@@ -5,6 +5,7 @@ export interface Folder {
   isExpanded: boolean;
   pinned?: boolean; // Whether folder is pinned to the top
   color?: string; // Optional folder color identifier
+  order?: number; // User-defined sorting order
   createdAt: number;
   updatedAt: number;
 }

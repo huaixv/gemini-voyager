@@ -2756,6 +2756,14 @@ body.light-theme {
   border: 2px dashed var(--folder-dragover-border);
 }
 
+.gv-folder-item.gv-folder-dragover-top > .gv-folder-item-header {
+  border-top: 2px solid var(--folder-dragover-border);
+}
+
+.gv-folder-item.gv-folder-dragover-bottom > .gv-folder-item-header {
+  border-bottom: 2px solid var(--folder-dragover-border);
+}
+
 .gv-folder-item-header[draggable='true'] {
   cursor: grab;
 }
